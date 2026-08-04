@@ -1,3 +1,4 @@
 .local/
-deployment.tar.gz
-
+*.tar.gz
+*.tmp
+_site/
