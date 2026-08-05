@@ -6,6 +6,7 @@ on:
     paths:
       - site.bundle.enc
       - player.bundle.enc
+      - kiok.bundle.enc
       - decrypt.mjs
       - .github/workflows/pages.yml
   workflow_dispatch:
@@ -34,17 +35,25 @@ jobs:
           SITE_PATH: ${{ secrets.SITE_PATH }}
           PLAYER_SITE_KEY: ${{ secrets.PLAYER_SITE_KEY }}
           PLAYER_SITE_PATH: ${{ secrets.PLAYER_SITE_PATH }}
+          KIOK_SITE_KEY: ${{ secrets.KIOK_SITE_KEY }}
+          KIOK_SITE_PATH: ${{ secrets.KIOK_SITE_PATH }}
         run: |
           set -euo pipefail
           test -n "$SITE_KEY"
           test -n "$SITE_PATH"
           test -n "$PLAYER_SITE_KEY"
           test -n "$PLAYER_SITE_PATH"
+          test -n "$KIOK_SITE_KEY"
+          test -n "$KIOK_SITE_PATH"
           test "${#SITE_KEY}" -ge 48
           test "${#PLAYER_SITE_KEY}" -ge 48
+          test "${#KIOK_SITE_KEY}" -ge 48
           [[ "$SITE_PATH" =~ ^[a-z0-9-]{24,80}$ ]]
           [[ "$PLAYER_SITE_PATH" =~ ^guide-[a-f0-9]{40}$ ]]
+          [[ "$KIOK_SITE_PATH" =~ ^kiok-[a-f0-9]{40}$ ]]
           test "$SITE_PATH" != "$PLAYER_SITE_PATH"
+          test "$SITE_PATH" != "$KIOK_SITE_PATH"
+          test "$PLAYER_SITE_PATH" != "$KIOK_SITE_PATH"
 
       - name: Decrypt design wiki bundle
         env:
@@ -55,6 +64,11 @@ jobs:
         env:
           SITE_KEY: ${{ secrets.PLAYER_SITE_KEY }}
         run: node decrypt.mjs decrypt player.bundle.enc /tmp/player-deployment.tar.gz
+
+      - name: Decrypt KIOK site bundle
+        env:
+          SITE_KEY: ${{ secrets.KIOK_SITE_KEY }}
+        run: node decrypt.mjs decrypt kiok.bundle.enc /tmp/kiok-deployment.tar.gz
 
       - name: Validate encrypted package boundaries
         run: |
@@ -72,29 +86,38 @@ jobs:
           }
           validate_archive /tmp/design-deployment.tar.gz
           validate_archive /tmp/player-deployment.tar.gz
+          validate_archive /tmp/kiok-deployment.tar.gz
 
-      - name: Assemble both unlisted sites
+      - name: Assemble three unlisted sites
         env:
           SITE_PATH: ${{ secrets.SITE_PATH }}
           PLAYER_SITE_PATH: ${{ secrets.PLAYER_SITE_PATH }}
+          KIOK_SITE_PATH: ${{ secrets.KIOK_SITE_PATH }}
         run: |
           set -euo pipefail
-          mkdir -p /tmp/design-pages /tmp/player-pages
+          mkdir -p /tmp/design-pages /tmp/player-pages /tmp/kiok-pages
           tar -xzf /tmp/design-deployment.tar.gz -C /tmp/design-pages
           tar -xzf /tmp/player-deployment.tar.gz -C /tmp/player-pages
-          if find /tmp/design-pages /tmp/player-pages -type l -print -quit | grep -q .; then
+          tar -xzf /tmp/kiok-deployment.tar.gz -C /tmp/kiok-pages
+          if find /tmp/design-pages /tmp/player-pages /tmp/kiok-pages -type l -print -quit | grep -q .; then
             exit 1
           fi
-          if find /tmp/design-pages /tmp/player-pages -type f -links +1 -print -quit | grep -q .; then
+          if find /tmp/design-pages /tmp/player-pages /tmp/kiok-pages -type f -links +1 -print -quit | grep -q .; then
             exit 1
           fi
           test -d /tmp/design-pages/root
           test -d /tmp/design-pages/site
           test -d /tmp/player-pages/site
+          test -d /tmp/kiok-pages/site
           test ! -e /tmp/player-pages/root
+          test ! -e /tmp/kiok-pages/root
           test "$(find /tmp/player-pages/site -type f | wc -l)" -eq 1
           test "$(find /tmp/player-pages/site -type f -name '*.html' | wc -l)" -eq 1
+          test "$(find /tmp/kiok-pages/site -type f | wc -l)" -ge 2
+          test "$(find /tmp/kiok-pages/site -type f | wc -l)" -le 5000
+          test "$(find /tmp/kiok-pages/site -type f -name '*.html' | wc -l)" -ge 2
           test ! -f /tmp/player-pages/site/index.html
+          test ! -f /tmp/kiok-pages/site/index.html
 
           rm -rf _site
           mkdir -p _site
@@ -103,6 +126,8 @@ jobs:
           cp -a /tmp/design-pages/site/. "_site/$SITE_PATH/"
           mkdir -p "_site/$PLAYER_SITE_PATH"
           cp -a /tmp/player-pages/site/. "_site/$PLAYER_SITE_PATH/"
+          mkdir -p "_site/$KIOK_SITE_PATH"
+          cp -a /tmp/kiok-pages/site/. "_site/$KIOK_SITE_PATH/"
 
           test -f _site/index.html
           test -f _site/robots.txt
@@ -112,11 +137,16 @@ jobs:
           grep -Fq 'name="referrer" content="no-referrer"' _site/index.html
           test ! -f "_site/$SITE_PATH/index.html"
           test ! -f "_site/$PLAYER_SITE_PATH/index.html"
+          test ! -f "_site/$KIOK_SITE_PATH/index.html"
           test "$(find "_site/$PLAYER_SITE_PATH" -type f -name '*.html' | wc -l)" -eq 1
+          test "$(find "_site/$KIOK_SITE_PATH" -type f -name '*.html' | wc -l)" -ge 2
           while IFS= read -r -d '' page; do
             grep -Fq 'noindex, nofollow, noarchive, nosnippet, noimageindex' "$page"
             grep -Fq 'name="referrer" content="no-referrer"' "$page"
-          done < <(find "_site/$SITE_PATH" "_site/$PLAYER_SITE_PATH" -type f -name '*.html' -print0)
+          done < <(find "_site/$SITE_PATH" "_site/$PLAYER_SITE_PATH" "_site/$KIOK_SITE_PATH" -type f -name '*.html' -print0)
+          if grep -R -E -i 'localhost|rel=.canonical' "_site/$KIOK_SITE_PATH" --include='*.html'; then
+            exit 1
+          fi
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
